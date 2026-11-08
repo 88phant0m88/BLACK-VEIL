@@ -6,8 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  GODOT_VERSION: "4.7.stable"
-  PROJECT_PATH: "."
+  GODOT_VERSION: "4.7"
   OUTPUT_NAME: "BLACK_VEIL_debug.apk"
 
 jobs:
@@ -24,21 +23,48 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wget unzip curl xvfb libgl1 mesa-utils
           
-      - name: Download Godot Linux headless
+      - name: Find correct Godot download URL
+        id: find_godot
         run: |
-          GODOT_URL="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux_headless.x86_64.zip"
-          echo "Downloading: $GODOT_URL"
-          wget -q "$GODOT_URL" -O godot.zip || { echo "FAILED to download Godot"; exit 1; }
+          # Try TuxFamily mirror first (more reliable)
+          BASE_URL="https://downloads.tuxfamily.org/godotengine/${GODOT_VERSION}.stable/"
+          
+          # Try headless binary
+          for SUFFIX in "linux_headless.x86_64.zip" "linux.x86_64.zip"; do
+            URL="${BASE_URL}Godot_v${GODOT_VERSION}.stable_${SUFFIX}"
+            echo "Testing: $URL"
+            if wget -q --spider "$URL" 2>/dev/null; then
+              echo "GODOT_URL=$URL" >> $GITHUB_OUTPUT
+              echo "FOUND: $URL"
+              break
+            fi
+          done
+          
+          # Fallback: try GitHub releases API
+          if [ -z "$GODOT_URL" ]; then
+            echo "Trying GitHub API..."
+            API_URL="https://api.github.com/repos/godotengine/godot-builds/releases/tags/${GODOT_VERSION}.stable"
+            URL=$(curl -s "$API_URL" | grep -o 'https://[^"]*linux_headless[^"]*\.zip' | head -1)
+            if [ -n "$URL" ]; then
+              echo "GODOT_URL=$URL" >> $GITHUB_OUTPUT
+              echo "FOUND via API: $URL"
+            fi
+          fi
+          
+      - name: Download Godot
+        if: steps.find_godot.outputs.GODOT_URL != ''
+        run: |
+          wget -q "${{ steps.find_godot.outputs.GODOT_URL }}" -O godot.zip
           unzip -q godot.zip
-          ls -la Godot_v${GODOT_VERSION}_linux_headless.x86_64
-          chmod +x Godot_v${GODOT_VERSION}_linux_headless.x86_64
-          echo "GODOT_BIN=$(pwd)/Godot_v${GODOT_VERSION}_linux_headless.x86_64" >> $GITHUB_ENV
+          chmod +x Godot_v${GODOT_VERSION}.stable_linux_headless.x86_64 2>/dev/null || chmod +x Godot_v${GODOT_VERSION}.stable_linux.x86_64 2>/dev/null || true
+          ls -la Godot* 2>/dev/null || echo "Godot binary not found"
           
       - name: Download Android export templates
         run: |
-          TEMPLATE_URL="https://downloads.tuxfamily.org/godotengine/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
-          echo "Downloading templates: $TEMPLATE_URL"
-          wget -q "$TEMPLATE_URL" -O export_templates.tpz || { echo "FAILED to download templates"; exit 1; }
+          BASE_URL="https://downloads.tuxfamily.org/godotengine/${GODOT_VERSION}.stable/"
+          URL="${BASE_URL}Godot_v${GODOT_VERSION}.stable_export_templates.tpz"
+          echo "Downloading templates: $URL"
+          wget -q "$URL" -O export_templates.tpz || { echo "FAILED to download templates"; exit 1; }
           mkdir -p ~/.local/share/godot/export_templates
           unzip -o export_templates.tpz -d ~/.local/share/godot/export_templates/
           ls -la ~/.local/share/godot/export_templates/
@@ -71,8 +97,17 @@ jobs:
       - name: Export Android APK
         run: |
           mkdir -p build
+          if [ -f "Godot_v${GODOT_VERSION}.stable_linux_headless.x86_64" ]; then
+            GODOT_BIN="Godot_v${GODOT_VERSION}.stable_linux_headless.x86_64"
+          elif [ -f "Godot_v${GODOT_VERSION}.stable_linux.x86_64" ]; then
+            GODOT_BIN="Godot_v${GODOT_VERSION}.stable_linux.x86_64"
+          else
+            echo "Godot binary not found!"
+            exit 1
+          fi
+          chmod +x $GODOT_BIN
           $GODOT_BIN --headless --verbose --export-debug "Android Debug" build/${OUTPUT_NAME} 2>&1 || true
-          ls -la build/ 2>/dev/null || echo "Build directory empty or missing"
+          ls -la build/ 2>/dev/null || echo "Build directory empty"
           file build/${OUTPUT_NAME} 2>/dev/null || echo "APK file not found"
           
       - name: Upload APK artifact
