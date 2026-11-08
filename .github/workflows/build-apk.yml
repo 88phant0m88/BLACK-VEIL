@@ -1,0 +1,78 @@
+name: Build BLACK VEIL APK
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7.stable"
+  PROJECT_PATH: "."
+  EXPORT_PRESET: "Android Debug"
+  OUTPUT_NAME: "BLACK_VEIL_debug.apk"
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install Godot Linux headless
+        run: |
+          GODOT_URL="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux_headless.x86_64.zip"
+          wget -q "$GODOT_URL" -O godot.zip
+          unzip -q godot.zip
+          chmod +x Godot_v${GODOT_VERSION}_linux_headless.x86_64
+          echo "GODOT_BIN=$(pwd)/Godot_v${GODOT_VERSION}_linux_headless.x86_64" >> $GITHUB_ENV
+          
+      - name: Download Android export templates
+        run: |
+          mkdir -p ~/.local/share/godot/export_templates
+          TEMPLATE_URL="https://downloads.tuxfamily.org/godotengine/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz"
+          wget -q "$TEMPLATE_URL" -O export_templates.tpz
+          unzip -q export_templates.tpz -d ~/.local/share/godot/export_templates/
+          
+      - name: Create export preset config
+        run: |
+          cat > export_presets.cfg << 'EOF'
+          [export_preset_data "Android Debug"]
+          target="TemplateDebug"
+          timeout=300
+          stripped=false
+          
+          [export_preset_data "TemplateDebug"]
+          pck="export_debug.pck"
+          all=true
+          path=""
+          target_class=4
+          target="Debug"
+          export_gdextensions=true
+          strip_engine_symbols=false
+          strip_translation_po=false
+          enable_blob_compression=true
+          android_apk="export_debug.apk"
+          android_min_sdk=21
+          android_target_sdk=34
+          android_ndk_api=21
+          EOF
+          
+      - name: Export Android APK
+        run: |
+          chmod +x $GODOT_BIN
+          $GODOT_BIN --headless --export-debug "Android Debug" build/black_veil_debug.apk
+          
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLACK_VEIL_APK
+          path: build/black_veil_debug.apk
+          retention-days: 7
+          
+      - name: Show file info
+        run: |
+          ls -la build/black_veil_debug.apk 2>/dev/null && file build/black_veil_debug.apk || echo "APK not found"
